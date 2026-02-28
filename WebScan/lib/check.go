@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,9 +32,19 @@ func CheckMultiPoc(req *http.Request, pocs []*Poc, workers int) {
 	for i := 0; i < workers; i++ {
 		go func() {
 			for task := range tasks {
-				isVul, _, name := executePoc(task.Req, task.Poc)
+				isVul, _, name, extractedVars := executePoc(task.Req, task.Poc)
 				if isVul {
 					result := fmt.Sprintf("[+] PocScan %s %s %s", task.Req.URL, task.Poc.Name, name)
+					if len(extractedVars) > 0 {
+						keys := make([]string, 0, len(extractedVars))
+						for k := range extractedVars {
+							keys = append(keys, k)
+						}
+						sort.Strings(keys)
+						for _, k := range keys {
+							result += fmt.Sprintf("\n    * %s: %s", k, extractedVars[k])
+						}
+					}
 					common.LogSuccess(result)
 				}
 				wg.Done()
@@ -52,7 +63,7 @@ func CheckMultiPoc(req *http.Request, pocs []*Poc, workers int) {
 	close(tasks)
 }
 
-func executePoc(oReq *http.Request, p *Poc) (bool, error, string) {
+func executePoc(oReq *http.Request, p *Poc) (bool, error, string, map[string]string) {
 	c := NewEnvOption()
 	c.UpdateCompileOptions(p.Set)
 	if len(p.Sets) > 0 {
@@ -69,21 +80,22 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error, string) {
 	env, err := NewEnv(&c)
 	if err != nil {
 		fmt.Printf("[-] %s environment creation error: %s\n", p.Name, err)
-		return false, err, ""
+		return false, err, "", nil
 	}
 	req, err := ParseRequest(oReq)
 	if err != nil {
 		fmt.Printf("[-] %s ParseRequest error: %s\n", p.Name, err)
-		return false, err, ""
+		return false, err, "", nil
 	}
 	variableMap := make(map[string]interface{})
 	defer func() { variableMap = nil }()
+	searchVars := make(map[string]string)
 	variableMap["request"] = req
 	for _, item := range p.Set {
 		k, expression := item.Key, item.Value
 		if expression == "newReverse()" {
 			if !common.DnsLog {
-				return false, nil, ""
+				return false, nil, "", nil
 			}
 			variableMap[k] = newReverse()
 			continue
@@ -97,7 +109,7 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error, string) {
 	//爆破模式,比如tomcat弱口令
 	if len(p.Sets) > 0 {
 		success, err = clusterpoc(oReq, p, variableMap, req, env)
-		return success, nil, ""
+		return success, nil, "", nil
 	}
 
 	DealWithRule := func(rule Rules) (bool, error) {
@@ -152,6 +164,9 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error, string) {
 			if len(result) > 0 { // 正则匹配成功
 				for k, v := range result {
 					variableMap[k] = v
+					if k != "" {
+						searchVars[k] = v
+					}
 				}
 			} else {
 				return false, nil
@@ -190,12 +205,12 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error, string) {
 			name, rules := item.Key, item.Value
 			success = DealWithRules(rules)
 			if success {
-				return success, nil, name
+				return success, nil, name, searchVars
 			}
 		}
 	}
 
-	return success, nil, ""
+	return success, nil, "", searchVars
 }
 
 func doSearch(re string, body string) map[string]string {

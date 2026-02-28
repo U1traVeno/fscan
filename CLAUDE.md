@@ -252,7 +252,7 @@ rules:
     path: /api/login
     body: '{"user":"{{user}}"}'
     search: '"token":"(?P<token>.*?)"'  # 命名捕获组
-    expression: status == 200 && body.bcontains(b'success')
+    expression: response.status == 200 && response.body.bcontains(b'success')
 ```
 
 #### 特殊机制
@@ -280,8 +280,14 @@ transport: http
 rules:
   - method: GET
     path: /vulnerable/path
-    expression: status == 200 && body.bcontains(b'marker')
+    expression: response.status == 200 && response.body.bcontains(b'marker')
 ```
+
+> **注意**：POC YAML 文件通过 `//go:embed pocs` 在**编译期**嵌入二进制。新增或修改 POC 后，必须重新编译才能生效：
+> ```bash
+> go build -ldflags="-s -w" -trimpath -o fscan main.go
+> ```
+> 如需在不重新编译的情况下临时加载外部 POC，可使用 `-pocpath <目录>` 参数从文件系统加载。
 
 ### 错误处理
 
