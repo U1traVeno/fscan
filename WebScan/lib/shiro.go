@@ -34,7 +34,7 @@ func GetShrioCookie(key, mode string) string {
 	}
 }
 
-//AES CBC加密后的payload
+// AES CBC加密后的payload
 func AES_CBC_Encrypt(shirokey string) string {
 	key, err := base64.StdEncoding.DecodeString(shirokey)
 	if err != nil {
@@ -52,7 +52,7 @@ func AES_CBC_Encrypt(shirokey string) string {
 	return base64.StdEncoding.EncodeToString(append(iv[:], cipherText[:]...))
 }
 
-//AES GCM 加密后的payload shiro 1.4.2版本更换为了AES-GCM加密方式
+// AES GCM 加密后的payload shiro 1.4.2版本更换为了AES-GCM加密方式
 func AES_GCM_Encrypt(shirokey string) string {
 	key, err := base64.StdEncoding.DecodeString(shirokey)
 	if err != nil {
