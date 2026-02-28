@@ -36,21 +36,25 @@ GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -trimpath -o fscan_darwin_arm
 fscan 使用标准 Go 编译工具链，支持以下编译优化：
 
 **ldflags 参数**：
+
 - `-s`：去除符号表（strip symbol table），减小二进制文件大小
 - `-w`：去除 DWARF 调试信息（strip debug info），进一步减小文件大小
 - 组合使用 `-ldflags="-s -w"` 可显著减小可执行文件体积（约减少 30-40%）
 
 **trimpath 参数**：
+
 - `-trimpath`：从生成的可执行文件中删除所有文件系统路径
 - 提高二进制文件的可重现性和安全性（不泄露本地路径信息）
 
 **构建约束（Build Tags）**：
+
 - fscan 代码库未使用构建标签（build tags），所有功能在所有平台上统一编译
 - 跨平台兼容性通过 Go 标准库的平台抽象实现（如 `runtime.GOOS`、`runtime.GOARCH`）
 - ICMP 功能在不同平台上使用 `golang.org/x/net/icmp` 包实现跨平台支持
 - 某些功能在特定平台上有限制（如 ICMP 需要管理员权限）
 
 **嵌入式资源（Embed）**：
+
 - WebScan 模块使用 `//go:embed pocs` 将 380+ 个 YAML POC 文件嵌入到二进制文件中
 - 编译时会自动打包 `WebScan/pocs/` 目录下的所有文件
 - 无需额外的资源文件即可分发单个可执行文件
@@ -284,9 +288,11 @@ rules:
 ```
 
 > **注意**：POC YAML 文件通过 `//go:embed pocs` 在**编译期**嵌入二进制。新增或修改 POC 后，必须重新编译才能生效：
+>
 > ```bash
 > go build -ldflags="-s -w" -trimpath -o fscan main.go
 > ```
+>
 > 如需在不重新编译的情况下临时加载外部 POC，可使用 `-pocpath <目录>` 参数从文件系统加载。
 
 ### 错误处理
