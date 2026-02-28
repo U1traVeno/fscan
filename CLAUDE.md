@@ -239,7 +239,7 @@ WebScan 负责 Web 漏洞扫描，采用 CEL 表达式引擎和模块化设计�
 1. 指纹识别：正则匹配 headers 和 body
 2. POC 过滤：根据指纹查询 `PocDatas`，过滤相关 POC
 3. 并发执行：worker 池（`-num` 控制）执行 POC，评估 CEL 表达式
-4. 结果输出：`[+] PocScan <URL> <POC名称>` 及 `search` 提取的命名变量（每行 `    * key: value`）
+4. 结果输出：`[+] PocScan <URL> <POC名称>` 及 `search` 提取的命名变量（每行 `* key: value`）
 
 #### POC YAML 格式
 
@@ -278,18 +278,29 @@ rules:
 
 命中时输出格式：
 
-```
+```text
 [+] PocScan http://10.0.0.1:8848 poc-yaml-example-with-extraction
     * accessToken: eyJhbGc...
     * username: nacos
 ```
 
 **说明**：
+
 - `search` 匹配范围为 `响应头 + 响应体` 的拼接字符串
 - 多个 rule 中的 `search` 均会被收集，后续 rule 提取的变量会覆盖同名变量
 - 提取的变量同时注入 `variableMap`，可在后续 rule 中通过 `{{varName}}` 引用
 - key 按字母序排列输出，空 key（未命名组）自动忽略
 - 实现位置：`WebScan/lib/check.go`，函数 `executePoc` 和 `CheckMultiPoc`
+
+#### POC 请求响应保存
+
+当 POC 命中时，可使用 `-hs <目录>` 参数保存触发漏洞的 HTTP 请求和响应：
+
+```bash
+fscan -hs ./poc-output -u http://target.com -pocname weblogic
+```
+
+命中后会在指定目录生成 `{poc_name}_{url_hash}_{timestamp}.txt` 文件，包含完整的请求头/请求体和响应头/响应体。
 
 #### 特殊机制
 

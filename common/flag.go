@@ -67,5 +67,6 @@ func Flag(Info *HostInfo) {
 	flag.StringVar(&Hash, "hash", "", "hash")
 	flag.BoolVar(&Noredistest, "noredis", false, "no redis sec test")
 	flag.BoolVar(&JsonOutput, "json", false, "json output")
+	flag.StringVar(&PocSavePath, "hs", "", "save poc http request and response to file when poc hits")
 	flag.Parse()
 }

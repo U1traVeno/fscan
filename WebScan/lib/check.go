@@ -6,9 +6,12 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/shadow1ng/fscan/WebScan/info"
 	"github.com/shadow1ng/fscan/common"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -32,7 +35,7 @@ func CheckMultiPoc(req *http.Request, pocs []*Poc, workers int) {
 	for i := 0; i < workers; i++ {
 		go func() {
 			for task := range tasks {
-				isVul, _, name, extractedVars := executePoc(task.Req, task.Poc)
+				isVul, _, name, extractedVars, lastReq, lastResp := executePoc(task.Req, task.Poc)
 				if isVul {
 					result := fmt.Sprintf("[+] PocScan %s %s %s", task.Req.URL, task.Poc.Name, name)
 					if len(extractedVars) > 0 {
@@ -46,6 +49,10 @@ func CheckMultiPoc(req *http.Request, pocs []*Poc, workers int) {
 						}
 					}
 					common.LogSuccess(result)
+					// Save HTTP request and response if PocSavePath is set
+					if common.PocSavePath != "" && lastReq != nil && lastResp != nil {
+						savePocHttpInfo(lastReq, lastResp, task.Poc.Name, common.PocSavePath)
+					}
 				}
 				wg.Done()
 			}
@@ -63,7 +70,7 @@ func CheckMultiPoc(req *http.Request, pocs []*Poc, workers int) {
 	close(tasks)
 }
 
-func executePoc(oReq *http.Request, p *Poc) (bool, error, string, map[string]string) {
+func executePoc(oReq *http.Request, p *Poc) (bool, error, string, map[string]string, *http.Request, *Response) {
 	c := NewEnvOption()
 	c.UpdateCompileOptions(p.Set)
 	if len(p.Sets) > 0 {
@@ -80,22 +87,25 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error, string, map[string]str
 	env, err := NewEnv(&c)
 	if err != nil {
 		fmt.Printf("[-] %s environment creation error: %s\n", p.Name, err)
-		return false, err, "", nil
+		return false, err, "", nil, nil, nil
 	}
 	req, err := ParseRequest(oReq)
 	if err != nil {
 		fmt.Printf("[-] %s ParseRequest error: %s\n", p.Name, err)
-		return false, err, "", nil
+		return false, err, "", nil, nil, nil
 	}
 	variableMap := make(map[string]interface{})
 	defer func() { variableMap = nil }()
 	searchVars := make(map[string]string)
 	variableMap["request"] = req
+	// Track last request and response for saving
+	var lastRequest *http.Request
+	var lastResponse *Response
 	for _, item := range p.Set {
 		k, expression := item.Key, item.Value
 		if expression == "newReverse()" {
 			if !common.DnsLog {
-				return false, nil, "", nil
+				return false, nil, "", nil, nil, nil
 			}
 			variableMap[k] = newReverse()
 			continue
@@ -109,7 +119,7 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error, string, map[string]str
 	//爆破模式,比如tomcat弱口令
 	if len(p.Sets) > 0 {
 		success, err = clusterpoc(oReq, p, variableMap, req, env)
-		return success, nil, "", nil
+		return success, nil, "", nil, nil, nil
 	}
 
 	DealWithRule := func(rule Rules) (bool, error) {
@@ -153,6 +163,9 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error, string, map[string]str
 		}
 		Headers = nil
 		resp, err := DoRequest(newRequest, rule.FollowRedirects)
+		// Track last request and response for saving
+		lastRequest = newRequest
+		lastResponse = resp
 		newRequest = nil
 		if err != nil {
 			return false, err
@@ -205,12 +218,12 @@ func executePoc(oReq *http.Request, p *Poc) (bool, error, string, map[string]str
 			name, rules := item.Key, item.Value
 			success = DealWithRules(rules)
 			if success {
-				return success, nil, name, searchVars
+				return success, nil, name, searchVars, lastRequest, lastResponse
 			}
 		}
 	}
 
-	return success, nil, "", searchVars
+	return success, nil, "", searchVars, lastRequest, lastResponse
 }
 
 func doSearch(re string, body string) map[string]string {
@@ -564,4 +577,43 @@ func GetHeader(header map[string]string) (output string) {
 	}
 	output = output + "\r\n"
 	return
+}
+
+func savePocHttpInfo(req *http.Request, resp *Response, pocName, savePath string) error {
+	// Create directory if it doesn't exist
+	err := os.MkdirAll(savePath, 0755)
+	if err != nil {
+		return err
+	}
+
+	// Generate filename: {poc_name}_{md5(url)}_{timestamp}.txt
+	urlHash := md5.Sum([]byte(req.URL.String()))
+	timestamp := time.Now().Unix()
+	filename := fmt.Sprintf("%s_%x_%d.txt", pocName, urlHash, timestamp)
+	filepath := filepath.Join(savePath, filename)
+
+	// Format request and response content
+	var content strings.Builder
+	content.WriteString("============== Request ==============\n")
+	content.WriteString(fmt.Sprintf("%s %s HTTP/1.1\n", req.Method, req.URL.RequestURI()))
+	content.WriteString(fmt.Sprintf("Host: %s\n", req.Host))
+	for k, v := range req.Header {
+		content.WriteString(fmt.Sprintf("%s: %s\n", k, strings.Join(v, ", ")))
+	}
+	if req.Body != nil {
+		body, _ := io.ReadAll(req.Body)
+		content.WriteString("\n")
+		content.WriteString(string(body))
+	}
+
+	content.WriteString("\n\n============== Response ==============\n")
+	content.WriteString(fmt.Sprintf("HTTP/1.1 %d %s\n", resp.Status, http.StatusText(int(resp.Status))))
+	for k, v := range resp.Headers {
+		content.WriteString(fmt.Sprintf("%s: %s\n", k, v))
+	}
+	content.WriteString("\n")
+	content.WriteString(string(resp.Body))
+
+	// Write to file
+	return os.WriteFile(filepath, []byte(content.String()), 0644)
 }
