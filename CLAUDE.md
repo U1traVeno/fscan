@@ -239,7 +239,7 @@ WebScan 负责 Web 漏洞扫描，采用 CEL 表达式引擎和模块化设计�
 1. 指纹识别：正则匹配 headers 和 body
 2. POC 过滤：根据指纹查询 `PocDatas`，过滤相关 POC
 3. 并发执行：worker 池（`-num` 控制）执行 POC，评估 CEL 表达式
-4. 结果输出：`[+] PocScan <URL> <POC名称> [变量]`
+4. 结果输出：`[+] PocScan <URL> <POC名称>` 及 `search` 提取的命名变量（每行 `    * key: value`）
 
 #### POC YAML 格式
 
@@ -258,6 +258,38 @@ rules:
     search: '"token":"(?P<token>.*?)"'  # 命名捕获组
     expression: response.status == 200 && response.body.bcontains(b'success')
 ```
+
+#### search 字段：正则提取并展示关键变量（本项目扩展）
+
+原版 xray 格式的 `search` 字段仅用于提取命名捕获组并注入到后续 rule 的变量替换中。本项目在此基础上扩展：**所有命名捕获组的值会在 POC 命中时一并打印到输出**，适用于提取 accessToken、凭据、版本号等敏感信息。
+
+**语法**：在任意 rule 中添加 `search` 字段，使用 Python 风格的命名捕获组 `(?P<name>...)`：
+
+```yaml
+name: poc-yaml-example-with-extraction
+transport: http
+rules:
+  - method: POST
+    path: /api/auth
+    body: '{"username":"admin","password":"admin"}'
+    search: '"accessToken":"(?P<accessToken>[^"]+)".*?"username":"(?P<username>[^"]+)"'
+    expression: response.status == 200 && response.body.bcontains(b'accessToken')
+```
+
+命中时输出格式：
+
+```
+[+] PocScan http://10.0.0.1:8848 poc-yaml-example-with-extraction
+    * accessToken: eyJhbGc...
+    * username: nacos
+```
+
+**说明**：
+- `search` 匹配范围为 `响应头 + 响应体` 的拼接字符串
+- 多个 rule 中的 `search` 均会被收集，后续 rule 提取的变量会覆盖同名变量
+- 提取的变量同时注入 `variableMap`，可在后续 rule 中通过 `{{varName}}` 引用
+- key 按字母序排列输出，空 key（未命名组）自动忽略
+- 实现位置：`WebScan/lib/check.go`，函数 `executePoc` 和 `CheckMultiPoc`
 
 #### 特殊机制
 
